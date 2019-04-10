@@ -19,9 +19,13 @@ package completion
 import (
 	"bytes"
 	"io"
+	"io/ioutil"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/plugin"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
 	"k8s.io/kubernetes/pkg/kubectl/util/templates"
@@ -128,7 +132,84 @@ func RunCompletion(out io.Writer, boilerPlate string, cmd *cobra.Command, args [
 		return cmdutil.UsageErrorf(cmd, "Unsupported shell type %q.", args[0])
 	}
 
+	// Insert any plugin commands under the root command so that completion includes them
+	addPluginCommands(cmd.Root())
+
 	return run(out, boilerPlate, cmd.Parent())
+}
+
+// Uses the plugin package to list all plugins then adds them to the kubectl
+// command so that the bash completion generator includes the plugins
+func addPluginCommands(kubectl *cobra.Command) {
+	output := &bytes.Buffer{}
+	streams := genericclioptions.IOStreams{
+		In:     &bytes.Buffer{},
+		Out:    output,
+		ErrOut: ioutil.Discard,
+	}
+
+	plugins := &plugin.PluginListOptions{
+		IOStreams: streams,
+		NameOnly:  true,
+	}
+
+	if err := plugins.Complete(kubectl); err != nil {
+		return
+	}
+
+	if err := plugins.Run(); err != nil {
+		return
+	}
+
+	// This map behaves as a set to get remove repeating plugin names
+	uniqueNames := make(map[string]int)
+
+	// Split output into array where one line is one element
+	pluginNames := strings.Split(output.String(), "\n")
+
+	for _, fullName := range pluginNames {
+		// The last element of the array is empty
+		if len(fullName) == 0 {
+			break
+		}
+
+		// Plugins are named "kubectl-<name>" or with more - such as
+		// "kubectl-<name>-<subcmd1>..."
+		nameArray := strings.SplitN(fullName, "-", 3)
+
+		if len(nameArray) < 2 {
+			// plugin name does not have the expected format
+			continue
+		}
+
+		// We only care about the name, which is the second element
+		// separated by -
+		name := nameArray[1]
+
+		// Insert the name into a map to get a unique list of plugin names
+		// This is because plugin names can repeat when they define
+		// subcommands (e.g., kubectl-plugin, kubectl-plugin-subcmd will both
+		// have the name "plugin")
+		uniqueNames[name] = 1
+	}
+
+	if len(uniqueNames) == 0 {
+		// No plugins found
+		return
+	}
+
+	pluginCmds := []*cobra.Command{}
+	for name := range uniqueNames {
+		// Create a bogus command with the proper name so that
+		// the bash completion generator includes it
+		pluginCmds = append(pluginCmds, &cobra.Command{
+			Use: name,
+			// A Run is required for it to be a valid command
+			Run: func(cmd *cobra.Command, args []string) {},
+		})
+	}
+
+	kubectl.AddCommand(pluginCmds...)
 }
 
 func runCompletionBash(out io.Writer, boilerPlate string, kubectl *cobra.Command) error {
