@@ -45,7 +45,7 @@ const defaultBoilerPlate = `
 
 var (
 	completionLong = templates.LongDesc(i18n.T(`
-		Output shell completion code for the specified shell (bash or zsh).
+		Output shell completion code for the specified shell (bash, zsh or fish).
 		The shell code must be evaluated to provide interactive
 		completion of kubectl commands.  This can be done by sourcing it from
 		the .bash_profile.
@@ -82,13 +82,17 @@ var (
 		# Load the kubectl completion code for zsh[1] into the current shell
 		    source <(kubectl completion zsh)
 		# Set the kubectl completion code for zsh[1] to autoload on startup
-		    kubectl completion zsh > "${fpath[1]}/_kubectl"`))
+		    kubectl completion zsh > "${fpath[1]}/_kubectl"
+
+		# Load the kubectl completion code for fish into the current shell
+		    kubectl completion fish | source`))
 )
 
 var (
 	completionShells = map[string]func(out io.Writer, boilerPlate string, cmd *cobra.Command) error{
 		"bash": runCompletionBash,
 		"zsh":  runCompletionZsh,
+		"fish": runCompletionFish,
 	}
 )
 
@@ -102,7 +106,7 @@ func NewCmdCompletion(out io.Writer, boilerPlate string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                   "completion SHELL",
 		DisableFlagsInUseLine: true,
-		Short:                 i18n.T("Output shell completion code for the specified shell (bash or zsh)"),
+		Short:                 i18n.T("Output shell completion code for the specified shell (bash, zsh or fish)"),
 		Long:                  completionLong,
 		Example:               completionExample,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -311,4 +315,15 @@ _complete kubectl 2>/dev/null
 `
 	out.Write([]byte(zshTail))
 	return nil
+}
+
+func runCompletionFish(out io.Writer, boilerPlate string, kubectl *cobra.Command) error {
+	if len(boilerPlate) == 0 {
+		boilerPlate = defaultBoilerPlate
+	}
+	if _, err := out.Write([]byte(boilerPlate)); err != nil {
+		return err
+	}
+
+	return kubectl.GenFishCompletion(out, true)
 }
